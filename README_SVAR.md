@@ -1,4 +1,4 @@
-# README - PGR301 Eksamen 2026
+# README_SVAR - PGR301 Eksamen 2026
 
 Kandidatnummer: **54**
 
