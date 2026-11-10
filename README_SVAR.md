@@ -2,7 +2,8 @@
 
 Kandidatnummer: **54**
 
-Kommandoene kjøres fra repo-roten med mindre noe annet står.
+Følgende dokumentasjon dekker besvarelsen for eksamen i PGR301. 
+Alle kommandoer forutsettes kjørt fra root med mindre annet er spesifisert.
 
 ---
 
@@ -10,35 +11,42 @@ Kommandoene kjøres fra repo-roten med mindre noe annet står.
 
 ### 1A - Containerisering
 
+For lokal kjøring og verifisering av applikasjonen benyttes følgende flyt:
+
 ```bash
-cp .env.example .env          # fyll inn egne AWS-nøkler
+cp .env.example .env          # Konfigurer egne AWS-nøkler
 docker build -t wishifai .
 docker run --rm -p 9999:9999 --env-file .env wishifai
 curl -F "image=@samples/sample_image.png" http://localhost:9999/api/analyze
+
 ```
 
-Dockerfilen er en **multi-stage build**:
+Docker-arkitekturen er implementert som en *multi-stage build* for å separere bygge- og kjøremiljøet.
+Byggesteget benytter Maven og JDK 21 til å kompilere kildekoden til en eksekverbar JAR-fil.
+Ved å kopiere `pom.xml` før øvrig kildekode, blir prosjektets avhengigheter cachet i et eget lag, 
+noe som optimerer byggetiden ved senere endringer.
+Kjøresteget baserer seg på en minimal JRE 21-runtime på Alpine Linux som kun mottar den ferdige artefakten.
+Dette reduserer både image-størrelse og angrepsflate betraktelig.
 
-- **Byggesteget** (Maven + JDK 21) lager JAR-filen. `pom.xml` kopieres før kildekoden, så avhengighetene caches i et eget lag og senere bygg går raskere.
-- **Kjøresteget** (JRE 21 på Alpine) får bare den ferdige JAR-filen. Byggeverktøy og kildekode blir ikke med, så imaget blir mindre og har færre mulige sårbarheter.
-- **Ikke root:** appen kjører som en egen bruker uten root-rettigheter.
-- **Exec-form:** `ENTRYPOINT` står i exec-form, slik at Java mottar `SIGTERM` og kan avslutte pent.
+Applikasjonen kjører med en dedikert bruker uten root-rettigheter, og `ENTRYPOINT` er definert i *exec-form* for å sikre 
+at Java-prosessen fanger opp operativsystemets `SIGTERM`-signaler og avsluttes kontrollert.
+Flagget `-DskipTests` er inkludert under bygging fordi enhetstestene krever tilgang til eksterne AWS-tjenester som ikke er tilgjengelige i build-konteksten.
 
-`-DskipTests` brukes fordi testene ville trengt AWS-tilgang inne i bygget. I et større team ville jeg kjørt testene som et eget steg i pipelinen.
-
-Appen lytter på **9999 overalt** (`server.port=9999`), slik at containeren, lokal kjøring og ECS bruker samme port. Nøklene leses fra `.env`, som er ignorert av både git og Docker. Bare malen `.env.example` committes. I ECS trengs ingen nøkler, fordi appen får tilgang gjennom task-rollen (se 2A).
+Tjenesten lytter på port 9999 (`server.port=9999`), hvilket sikrer konsistent portbruk på tvers av lokal kjøring og ECS.
+Sensitiv konfigurasjon håndteres via `.env`, som er ekskludert fra versjonskontroll; kun malen `.env.example` inkluderes i repositoryet.
+I produksjonsmiljøet (ECS) benyttes IAM task-rollen for autentisering snarere enn statiske nøkler.
 
 ### 1B - CI-pipeline til ECR
 
-**Grønn kjøring:** <https://github.com/SeanMcKoi/PGR301-exam-solution/actions/runs/41046462788>
+*Vellykket kjøring:* [GitHub Actions Run](https://github.com/SeanMcKoi/PGR301-exam-solution/actions/runs/41046462788)
 
-`.github/workflows/ci.yml` kjører **kun ved push til `main`**. Den logger inn på AWS med nøkler fra GitHub Secrets, bygger imaget og pusher det til ECR-repoet `wishifai-54`. Repoet er opprettet manuelt med AWS CLI.
+Pipelinen definert i `.github/workflows/ci.yml` utløses ved push til `main`.
+Den autentiserer mot AWS via GitHub Secrets, bygger containerimaget og publiserer det til ECR-repositoriet `wishifai-54`.
 
-**Tagging-strategi:** hvert image tagges med **full commit-SHA** og `latest`.
-
-- **Commit-SHA:** peker på nøyaktig koden imaget ble bygget fra og overskrives aldri. Dermed er det alltid sporbart hva som kjører, og rollback betyr å deploye en tidligere SHA. Det er denne taggen Terraform deployer.
-- **`latest`:** bare en snarvei for å trekke nyeste versjon lokalt. Den brukes ikke til deploy, fordi den flytter seg ved hver push.
-- **Semantisk versjonering:** vurdert, men det krever manuell versjonering. Med kontinuerlig deploy fra `main` gir SHA-en samme sporbarhet automatisk.
+Imaget tagges med både full commit-SHA og `latest`.
+Commit-SHA-en fungerer som en uforanderlig peker til den spesifikke koden imaget ble bygget fra, noe som sikrer full sporbarhet og forenkler eventuell rollback.
+`latest`-taggen benyttes kun lokalt for enkel henting og utelates fra deploy-prosessen. 
+Semantisk versjonering ble vurdert, men kontinuerlig leveranse direkte fra `main` gjør at commit-SHA dekker behovet for sporbarhet automatisk.
 
 ---
 
@@ -46,28 +54,35 @@ Appen lytter på **9999 overalt** (`server.port=9999`), slik at containeren, lok
 
 ### 2A - Infrastruktur for tjenesten
 
-**Offentlig URL:** <https://wi-2b51b7f8849b40479605fee85ad716bc.ecs.eu-west-1.on.aws>
+*Offentlig endepunkt:* [AWS ECS Service URL](https://wi-2b51b7f8849b40479605fee85ad716bc.ecs.eu-west-1.on.aws)
 
-```bash
-curl -F "image=@samples/sample_image.png" \
-  https://wi-2b51b7f8849b40479605fee85ad716bc.ecs.eu-west-1.on.aws/api/analyze
-```
-
-Terraform-koden ligger i `infra/`, med én fil per ansvarsområde (`s3.tf`, `iam.tf`, `ecs.tf`, `variables.tf`, `outputs.tf`, `providers.tf`):
+Infrastrukturen provisjoneres via Terraform fra `infra/`-mappen:
 
 ```bash
 cd infra && terraform init && terraform apply && terraform output service_url
+
 ```
 
-- **Variabler:** `region`, `candidate_number`, `image_tag` og `ecr_repository`. Alle ressursnavn får kandidatnummeret som suffiks, siden kontoen deles av hele klassen. Pipelinen sender inn commit-SHA som `image_tag`, så nøyaktig det imaget som nettopp ble bygget blir deployet.
-- **Tjenesten** bruker de oppgitte rollene `ecsTaskExecutionRole` og `ecsInfrastructureRoleForExpressServices`.
-  - `container_port = 9999` stemmer med appen.
-  - Helsesjekken går mot `/actuator/health`.
-  - `wait_for_steady_state = true` gjør at `apply` feiler hvis containeren ikke blir sunn, i stedet for å gi en falsk grønn pipeline.
-- **S3-bucket:** `wishifai-uploads-54`, med all offentlig tilgang blokkert. `S3_BUCKET` settes automatisk på containeren fra bucket-ressursen, så navnet bare finnes ett sted. `force_destroy` gjør opprydding enkelt her, men ville blitt fjernet i produksjon.
-- **Task-rolle** (`wishifai-task-role-54`) med minste privilegium, basert på AWS-kallene appen faktisk gjør:
-  - `s3:PutObject`, kun på egen bucket. Rekognition får bildet som bytes, så lesetilgang trengs ikke.
-  - `rekognition:DetectLabels`
-  - `bedrock:InvokeModel` på modeller og inferensprofiler. `eu.`-profilen ruter til flere EU-regioner.
-  - `cloudwatch:PutMetricData` for metrikker fra Micrometer.
-  - Rekognition og CloudWatch støtter ikke ressursbegrensning for disse handlingene, så de har `*`.
+Konfigurasjonen er strukturert med variabler for region, kandidatnummer, image-tag og ECR-repositorium, 
+der kandidatnummeret benyttes som suffiks for å unngå navnekollisjoner i felles AWS-konto. 
+ECS-tjenesten benytter standardrollene `ecsTaskExecutionRole` og `ecsInfrastructureRoleForExpressServices`, \n
+med helsesjekk mot `/actuator/health` og `wait_for_steady_state = true` for å sikre verifisert oppstart.
+
+S3-bøtten `wishifai-uploads-54` er opprettet med blokkert offentlig tilgang, og navnet overføres dynamisk til containeren via miljøvariabel.
+IAM task-rollen `wishifai-task-role-54` er begrenset i henhold til prinsippet om minste privilegium: 
+`s3:PutObject` er avgrenset til egen bøtte (da Rekognition mottar binærdata direkte), 
+og tillatelser gis for `rekognition:DetectLabels`, `bedrock:InvokeModel` samt `cloudwatch:PutMetricData`.
+
+### 2B - Remote State og Versjonering
+
+Terraform-tilstanden lagres sentralt i S3-bøtten `pgr301-terraform-state` under stien `wishifai/54/terraform.tfstate`.
+Tilstandslåsing er aktivert via `use_lockfile = true` (krever Terraform $\ge 1.10$) for å forhindre samtidige endringer, 
+og state-filen krypteres med `encrypt = true`. Provider-versjoner låses gjennom innsjekking av `.terraform.lock.hcl`.
+
+### 2C - Terraform i GitHub Actions
+
+*Vellykket kjøring:* [GitHub Actions Run - Terraform](https://github.com/SeanMcKoi/PGR301-exam-solution/actions/runs/42857588158)
+
+Pipelinen integrerer Terraform som et oppfølgende steg etter at imaget er publisert (`needs: build-and-push`). 
+Dette sikrer at infrastrukturen kun oppdateres dersom kildekoden bygger og pushes uten feil, og at tjenesten alltid peker på en gyldig og eksisterende image-tag i ECR. 
+Rekkefølgen forhindrer at ECS forsøker å hente et bilde som ennå ikke eksisterer, og gir en ren kobling mellom commit, bilde og distribusjon.
