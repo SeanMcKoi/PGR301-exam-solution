@@ -1,6 +1,9 @@
 package no.pgr301.exam.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import no.pgr301.exam.model.GiftAnalysis;
 import no.pgr301.exam.model.GiftSuggestion;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,11 +27,30 @@ public class BedrockService {
 
     private final BedrockRuntimeClient client;
     private final String modelId;
+    private final Timer converseTimer;
+    private final Counter inputTokens;
+    private final Counter outputTokens;
+    private final Counter parseErrors;
 
     public BedrockService(BedrockRuntimeClient client,
-                          @Value("${app.bedrock.model-id}") String modelId) {
+                          @Value("${app.bedrock.model-id}") String modelId,
+                          MeterRegistry registry) {
         this.client = client;
         this.modelId = modelId;
+        this.converseTimer = Timer.builder("wishifai.bedrock.latency")
+                .description("Bedrock Converse latency")
+                .register(registry);
+        this.inputTokens = Counter.builder("wishifai.bedrock.tokens")
+                .description("Tokens brukt mot Bedrock Converse")
+                .tag("type", "input")
+                .register(registry);
+        this.outputTokens = Counter.builder("wishifai.bedrock.tokens")
+                .description("Tokens brukt mot Bedrock Converse")
+                .tag("type", "output")
+                .register(registry);
+        this.parseErrors = Counter.builder("wishifai.bedrock.parse_errors")
+                .description("Antall feil ved parsing av svar fra Bedrock Converse")
+                .register(registry);
     }
 
     /**
@@ -86,13 +108,18 @@ public class BedrockService {
                 }
                 """.formatted(String.join(", ", labels));
 
-        ConverseResponse resp = client.converse(ConverseRequest.builder()
+        ConverseResponse resp = converseTimer.record(() -> client.converse(ConverseRequest.builder()
                 .modelId(modelId)
                 .messages(Message.builder()
                         .role(ConversationRole.USER)
                         .content(ContentBlock.fromText(prompt))
                         .build())
-                .build());
+                .build()));
+
+        if (resp.usage() != null) {
+            inputTokens.increment(resp.usage().inputTokens());
+            outputTokens.increment(resp.usage().outputTokens());
+        }
 
         String text = resp.output().message().content().get(0).text();
         return parseAnalysis(text);
@@ -104,6 +131,7 @@ public class BedrockService {
             String json = m.find() ? m.group() : text;
             return MAPPER.readValue(json, GiftAnalysis.class);
         } catch (Exception e) {
+            parseErrors.increment();
             return new GiftAnalysis(
                     "(ukjent)",
                     "(kunne ikke parse svar)",
