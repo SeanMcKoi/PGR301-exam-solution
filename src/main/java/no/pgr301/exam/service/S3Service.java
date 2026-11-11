@@ -24,6 +24,7 @@ public class S3Service {
         this.bucket = bucket;
         this.uploadTimer = Timer.builder("wishifai.s3.upload.latency")
                 .description("Latency for S3-bildeopplastning")
+                .publishPercentiles(0.5, 0.9)
                 .register(registry);
         this.imageSize = DistributionSummary.builder("wishifai.image.size")
                 .description("Bildestørrelse i bytes")

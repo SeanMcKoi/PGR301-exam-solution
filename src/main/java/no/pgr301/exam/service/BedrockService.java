@@ -39,6 +39,7 @@ public class BedrockService {
         this.modelId = modelId;
         this.converseTimer = Timer.builder("wishifai.bedrock.latency")
                 .description("Bedrock Converse latency")
+                .publishPercentiles(0.5, 0.9)
                 .register(registry);
         this.inputTokens = Counter.builder("wishifai.bedrock.tokens")
                 .description("Tokens brukt mot Bedrock Converse")
