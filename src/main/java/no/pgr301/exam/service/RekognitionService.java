@@ -24,6 +24,7 @@ public class RekognitionService {
         this.client = client;
         this.detectTimer = Timer.builder("wishifai.rekognition.latency")
                 .description("Latency for rekognition DetectLabels")
+                .publishPercentiles(0.5, 0.9)
                 .register(registry);
         this.labelsPerImage = DistributionSummary.builder("wishifai.rekognition.labels")
                 .description("Antall labels per bilde")
