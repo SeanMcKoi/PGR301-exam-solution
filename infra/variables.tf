@@ -21,3 +21,8 @@ variable "ecr_repository" {
   type        = string
   default     = "wishifai-54"
 }
+
+variable "alarm_email" {
+  description = "e-post som får varsel fra alarm"
+  type        = string
+}
