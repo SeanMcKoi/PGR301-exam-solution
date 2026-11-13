@@ -8,7 +8,7 @@ resource "aws_cloudwatch_dashboard" "main" {
 
   dashboard_body = jsonencode({
     start          = "2026-11-11T21:00:00.000Z"
-    end            = "2026-11-12T08:00:00.000Z"
+    end            = "2026-11-12T19:30:00.000Z"
     periodOverride = "inherit"
     widgets = [
       {
