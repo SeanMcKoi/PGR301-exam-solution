@@ -171,6 +171,7 @@ Medianen viser hva en vanlig bruker opplever. p90 viser de tregeste kallene.
 
 Dataene i dashboardet kommer fra dette skriptet, som jeg kjørte mot tjenesten i ECS over natten.
 Skriptet sender to bilder hvert 10. minutt. `caffeinate -i` hindrer at Mac-en går i dvale.
+Dashboardet åpnes på perioden med testtrafikk. Velg et annet tidsrom øverst til høyre for å se nyere data.
 
 ```bash
 caffeinate -i bash -c '
